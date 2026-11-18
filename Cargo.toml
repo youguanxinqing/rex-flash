@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 description = "flash.nvim-style search, select, and yank over a Rex block's visible text"
 license = "MIT"
+repository = "https://github.com/youguanxinqing/rex-flash"
 
 [dependencies]
 anyhow = "1.0"
