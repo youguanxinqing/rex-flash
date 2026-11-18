@@ -56,7 +56,7 @@ machine running the Rex app matters; remote hosts need just the binary.
 Append [`rex/flash.lua`](rex/flash.lua) to that file:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/youguanxinqing/rex-flash/main/rex/flash.lua \
+curl -fsSL https://raw.githubusercontent.com/youguanxinqing/rex-flash/master/rex/flash.lua \
   >> ~/.config/rex/init.lua
 ```
 
