@@ -1,0 +1,13 @@
+[package]
+name = "rex-flash"
+version = "0.1.0"
+edition = "2021"
+description = "flash.nvim-style search, select, and yank over a Rex block's visible text"
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+crossterm = "0.28"
+# The picker itself: search, labels, selection, rendering, OSC 52 yank. Pinned; it tracks main.
+herdr-flash = { git = "https://github.com/youguanxinqing/herdr-flash", rev = "cb50eb5" }
