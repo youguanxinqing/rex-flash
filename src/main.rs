@@ -30,6 +30,10 @@ struct Cli {
     /// The block's height in cells.
     #[arg(long)]
     rows: u16,
+    /// The block's text, if the caller already has it. Without it, rex-flash runs `rex capture`,
+    /// which costs 20-40 ms while the float sits blank.
+    #[arg(long)]
+    screen: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -39,17 +43,11 @@ fn main() -> Result<()> {
         std::env::set_var("HERDR_PLUGIN_CONFIG_DIR", config_dir());
     }
 
-    let output = Command::new("rex")
-        .args(["capture", "-b", &cli.block])
-        .output()
-        .context("failed to run rex capture")?;
-    if !output.status.success() {
-        bail!(
-            "rex capture failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    let rows = visible_rows(&String::from_utf8_lossy(&output.stdout), cli.rows);
+    let screen = match cli.screen {
+        Some(screen) => screen,
+        None => capture(&cli.block)?,
+    };
+    let rows = visible_rows(&screen, cli.rows);
     let snapshot = flash_snapshot(&cli.block, rows, cli.cols, cli.rows);
 
     // A new float starts at a default size; Rex resizes it to its bounds once the app shows it.
@@ -58,6 +56,20 @@ fn main() -> Result<()> {
         eprintln!("rex-flash: {error:#}");
     }
     herdr_flash::picker::run_flash_picker(&snapshot, &mut []).map(|_| ())
+}
+
+fn capture(block: &str) -> Result<String> {
+    let output = Command::new("rex")
+        .args(["capture", "-b", block])
+        .output()
+        .context("failed to run rex capture")?;
+    if !output.status.success() {
+        bail!(
+            "rex capture failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// `$XDG_CONFIG_HOME/rex-flash`, else `~/.config/rex-flash`. A missing file means defaults.
