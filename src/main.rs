@@ -13,6 +13,7 @@ use herdr_flash::model::{
     PickerSnapshot, SourcePaneSnapshot,
 };
 use herdr_flash::viewport::map_visible_viewport;
+use std::num::NonZeroU16;
 use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -47,7 +48,7 @@ fn main() -> Result<()> {
         Some(screen) => screen,
         None => capture(&cli.block)?,
     };
-    let rows = visible_rows(&screen, cli.rows);
+    let rows = visible_rows(&screen, cli.cols, cli.rows);
     let snapshot = flash_snapshot(&cli.block, rows, cli.cols, cli.rows);
 
     // A new float starts at a default size; Rex resizes it to its bounds once the app shows it.
@@ -60,7 +61,9 @@ fn main() -> Result<()> {
 
 fn capture(block: &str) -> Result<String> {
     let output = Command::new("rex")
-        .args(["capture", "-b", block])
+        // vt, not text: text drops the blank rows at the bottom of the screen, so its last lines
+        // reach up into the scrollback.
+        .args(["capture", "-b", block, "--format=vt"])
         .output()
         .context("failed to run rex capture")?;
     if !output.status.success() {
@@ -99,14 +102,20 @@ fn wait_for_size(width: u16, height: u16, timeout: Duration) -> Result<()> {
     }
 }
 
-/// The screen is the last `height` lines of a capture; the rest is scrollback.
-fn visible_rows(capture: &str, height: u16) -> Vec<String> {
-    let capture = capture.strip_suffix('\n').unwrap_or(capture);
-    let lines: Vec<&str> = capture.split('\n').collect();
-    lines[lines.len().saturating_sub(usize::from(height))..]
-        .iter()
-        .map(|line| line.trim_end_matches('\r').to_string())
-        .collect()
+/// The block's screen, from a vt capture replayed through a terminal emulator at the block's size.
+/// vt is Rex's redraw stream, so any escape it uses, such as cursor-forward over a run of blank
+/// cells, lands where the block shows it, and the scrollback scrolls off the top.
+fn visible_rows(capture: &str, width: u16, height: u16) -> Vec<String> {
+    // vt ends the last row with nothing, so a trailing \r\n is an empty last row. `rex capture`
+    // appends a bare \n when the last row isn't empty; replaying it would scroll the screen.
+    let capture = match capture.strip_suffix('\n') {
+        Some(rest) if !rest.ends_with('\r') => rest,
+        _ => capture,
+    };
+    let size = |n: u16| NonZeroU16::new(n).unwrap_or(NonZeroU16::MIN);
+    let mut parser = vt100::Parser::new(size(height), size(width), 0);
+    parser.process(capture.as_bytes());
+    parser.screen().rows(0, width).collect()
 }
 
 fn flash_snapshot(block: &str, rows: Vec<String>, width: u16, height: u16) -> PickerSnapshot {
@@ -144,14 +153,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn visible_rows_drop_scrollback_and_keep_blank_screen_rows() {
-        let capture = "old\nscreen 1\n\nscreen 3\n";
-        assert_eq!(visible_rows(capture, 3), vec!["screen 1", "", "screen 3"]);
+    fn blank_rows_at_the_bottom_of_the_screen_stay_on_screen() {
+        // Two scrollback lines, then a 4-row screen whose last two rows are blank.
+        let vt = "\x1b[0mold 1\r\nold 2\r\n\x1b[38;5;1mtop\x1b[0m\r\n$\r\n\r\n";
+        assert_eq!(visible_rows(vt, 10, 4), vec!["top", "$", "", ""]);
+        // rex capture appends a bare newline when the last row isn't empty.
+        assert_eq!(visible_rows("old\r\na\r\nb\n", 10, 2), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn escapes_take_their_cells() {
+        // Cursor-forward skips blank cells (a right prompt), a hyperlink wraps text, and a row
+        // exactly the block's width doesn't wrap into the next.
+        let vt = "$ ls\x1b[3C<<<\r\n\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\\r\n0123456789\r\nnext";
+        assert_eq!(
+            visible_rows(vt, 10, 4),
+            vec!["$ ls   <<<", "link", "0123456789", "next"]
+        );
     }
 
     #[test]
     fn short_capture_is_padded_to_the_block_height() {
-        let snapshot = flash_snapshot("block:1", visible_rows("only\n", 3), 10, 3);
+        let snapshot = flash_snapshot("block:1", visible_rows("only\n", 10, 3), 10, 3);
         let viewport = snapshot.source.visible_viewport.unwrap();
         assert_eq!(viewport.rows, vec!["only", "", ""]);
         assert_eq!(snapshot.source.logical_lines, viewport.logical_lines);
